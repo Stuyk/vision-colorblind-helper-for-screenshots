@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Vision Engine | Color-Blind Game Dev Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;600&display=swap');
+        
+        :root {
+            --bg: #0a0a0a;
+            --panel: #141414;
+            --accent: #3b82f6;
+            --border: #262626;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            color: #e5e5e5;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* Checkerboard background for transparency/canvas area */
+        .canvas-container {
+            cursor: crosshair;
+            background-image: 
+                linear-gradient(45deg, #111 25%, transparent 25%), 
+                linear-gradient(-45deg, #111 25%, transparent 25%), 
+                linear-gradient(45deg, transparent 75%, #111 75%), 
+                linear-gradient(-45deg, transparent 75%, #111 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+        }
+
+        .glass {
+            background: rgba(20, 20, 20, 0.85);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--border);
+        }
+
+        #magnifier {
+            pointer-events: none;
+            border: 2px solid #fff;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            border-radius: 50%;
+            display: none;
+            position: fixed;
+            z-index: 100;
+        }
+
+        /* Simulation Filters applied via SVG */
+        .filter-protanopia { filter: url(#protanopia); }
+        .filter-deuteranopia { filter: url(#deuteranopia); }
+        .filter-tritanopia { filter: url(#tritanopia); }
+        .filter-grayscale { filter: grayscale(100%); }
+        .filter-edge { filter: invert(1) grayscale(100%) contrast(400%); }
+        
+        .active-mode {
+            background-color: #2563eb !important;
+            color: white !important;
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen">
+
+    <svg style="display: none;">
+        <defs>
+            <filter id="protanopia">
+                <feColorMatrix type="matrix" values="0.567, 0.433, 0, 0, 0, 0.558, 0.442, 0, 0, 0, 0, 0.242, 0.758, 0, 0, 0, 0, 0, 1, 0" />
+            </filter>
+            <filter id="deuteranopia">
+                <feColorMatrix type="matrix" values="0.625, 0.375, 0, 0, 0, 0.7, 0.3, 0, 0, 0, 0, 0.3, 0.7, 0, 0, 0, 0, 0, 1, 0" />
+            </filter>
+            <filter id="tritanopia">
+                <feColorMatrix type="matrix" values="0.95, 0.05, 0, 0, 0, 0, 0.433, 0.567, 0, 0, 0, 0.475, 0.525, 0, 0, 0, 0, 0, 1, 0" />
+            </filter>
+        </defs>
+    </svg>
+
+    <header class="h-14 border-b border-neutral-800 flex items-center justify-between px-6 bg-neutral-900/80 z-20">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 bg-blue-600 rounded flex items-center justify-center">
+                <i data-lucide="eye" class="w-5 h-5 text-white"></i>
+            </div>
+            <h1 class="font-semibold tracking-tight text-lg uppercase">The Vision Engine</h1>
+        </div>
+        <div class="flex items-center gap-4">
+            <button id="uploadBtn" class="flex items-center gap-2 px-4 py-1.5 bg-neutral-800 hover:bg-neutral-700 rounded-md text-sm transition-all border border-neutral-700">
+                <i data-lucide="upload" class="w-4 h-4"></i> Upload
+            </button>
+            <input type="file" id="fileInput" class="hidden" accept="image/*">
+            <div class="text-xs text-neutral-500 hidden md:block">
+                <kbd class="px-1.5 py-0.5 bg-neutral-800 rounded border border-neutral-700">Ctrl+V</kbd> to paste
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 flex overflow-hidden">
+        <div id="dropZone" class="flex-1 relative overflow-hidden canvas-container flex items-center justify-center p-4">
+            <div id="emptyState" class="absolute inset-0 flex flex-col items-center justify-center text-center">
+                <div class="w-20 h-20 bg-neutral-900 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-neutral-800">
+                    <i data-lucide="image-plus" class="w-10 h-10 text-neutral-600"></i>
+                </div>
+                <h2 class="text-neutral-400 font-medium">Ready for analysis</h2>
+                <p class="text-neutral-600 text-sm">Drop your UI screenshot here</p>
+            </div>
+            
+            <canvas id="mainCanvas" class="max-w-full max-h-full shadow-2xl transition-all duration-300"></canvas>
+            <canvas id="magnifier" width="160" height="160"></canvas>
+
+            <div class="absolute bottom-6 left-1/2 -translate-x-1/2 glass rounded-full px-2 py-1.5 flex gap-1 shadow-2xl z-30">
+                <button data-mode="normal" class="mode-btn active-mode px-4 py-1.5 rounded-full text-xs font-semibold transition-all">Normal</button>
+                <button data-mode="protanopia" class="mode-btn px-4 py-1.5 rounded-full text-xs font-semibold text-neutral-400 hover:text-white transition-all">Protan</button>
+                <button data-mode="deuteranopia" class="mode-btn px-4 py-1.5 rounded-full text-xs font-semibold text-neutral-400 hover:text-white transition-all">Deuter</button>
+                <button data-mode="tritanopia" class="mode-btn px-4 py-1.5 rounded-full text-xs font-semibold text-neutral-400 hover:text-white transition-all">Tritan</button>
+                <button data-mode="grayscale" class="mode-btn px-4 py-1.5 rounded-full text-xs font-semibold text-neutral-400 hover:text-white transition-all">Lum</button>
+                <button data-mode="edge" class="mode-btn px-4 py-1.5 rounded-full text-xs font-semibold text-neutral-400 hover:text-white transition-all">Edge</button>
+            </div>
+        </div>
+
+        <aside class="w-80 border-l border-neutral-800 bg-neutral-900/50 flex flex-col overflow-y-auto">
+            <section class="p-6 border-b border-neutral-800">
+                <h3 class="text-[10px] font-bold text-neutral-500 uppercase tracking-[0.2em] mb-6">Pixel Inspector</h3>
+                <div class="flex items-center gap-4 mb-8">
+                    <div id="colorPreview" class="w-16 h-16 rounded-xl border border-neutral-700 shadow-xl bg-neutral-800 transition-colors"></div>
+                    <div class="flex-1">
+                        <div id="colorName" class="font-bold text-lg leading-tight truncate">Empty</div>
+                        <div id="colorHex" class="mono text-sm text-blue-500 font-medium">#------</div>
+                    </div>
+                </div>
+
+                <div class="space-y-6">
+                    <div>
+                        <div class="text-[10px] text-neutral-500 uppercase mb-2 mono">Perceptual (LCH)</div>
+                        <div class="grid grid-cols-3 gap-2">
+                            <div class="bg-neutral-800/40 p-2 rounded border border-neutral-800">
+                                <div class="text-[9px] text-neutral-500">LUM</div>
+                                <div id="valL" class="mono text-sm font-bold">0</div>
+                            </div>
+                            <div class="bg-neutral-800/40 p-2 rounded border border-neutral-800">
+                                <div class="text-[9px] text-neutral-500">CHR</div>
+                                <div id="valC" class="mono text-sm font-bold">0</div>
+                            </div>
+                            <div class="bg-neutral-800/40 p-2 rounded border border-neutral-800">
+                                <div class="text-[9px] text-neutral-500">HUE</div>
+                                <div id="valH" class="mono text-sm font-bold">0</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="p-6 border-b border-neutral-800">
+                <h3 class="text-[10px] font-bold text-neutral-500 uppercase tracking-[0.2em] mb-4">Accessibility Check</h3>
+                <div id="safetyBadge" class="p-4 rounded-xl border border-neutral-800 bg-neutral-800/20 flex gap-3 transition-all">
+                    <div id="safetyIcon" class="mt-0.5"><i data-lucide="shield-question" class="w-5 h-5 text-neutral-600"></i></div>
+                    <div>
+                        <div id="safetyTitle" class="text-sm font-bold">No Data</div>
+                        <div id="safetyDesc" class="text-xs text-neutral-500 mt-1 leading-relaxed">Hover over image to analyze.</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="p-6">
+                <h3 class="text-[10px] font-bold text-neutral-500 uppercase tracking-[0.2em] mb-4">Saved Palette</h3>
+                <div id="paletteGrid" class="grid grid-cols-5 gap-2 mb-6">
+                    <div class="aspect-square bg-neutral-800/50 rounded-md border border-dashed border-neutral-700"></div>
+                    <div class="aspect-square bg-neutral-800/50 rounded-md border border-dashed border-neutral-700"></div>
+                    <div class="aspect-square bg-neutral-800/50 rounded-md border border-dashed border-neutral-700"></div>
+                    <div class="aspect-square bg-neutral-800/50 rounded-md border border-dashed border-neutral-700"></div>
+                    <div class="aspect-square bg-neutral-800/50 rounded-md border border-dashed border-neutral-700"></div>
+                </div>
+                <button id="exportBtn" class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition-all shadow-lg flex items-center justify-center gap-2">
+                    <i data-lucide="download" class="w-3.5 h-3.5"></i> Export JSON
+                </button>
+            </section>
+
+            <footer class="mt-auto p-6 border-t border-neutral-800">
+                <p class="text-[10px] text-neutral-600 leading-relaxed italic">
+                    "Use high Chroma (C) to distinguish Yellow from White in all vision types."
+                </p>
+            </footer>
+        </aside>
+    </main>
+
+    <script>
+        lucide.createIcons();
+
+        // DOM Elements
+        const mainCanvas = document.getElementById('mainCanvas');
+        const ctx = mainCanvas.getContext('2d', { willReadFrequently: true });
+        const magCanvas = document.getElementById('magnifier');
+        const magCtx = magCanvas.getContext('2d');
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const emptyState = document.getElementById('emptyState');
+        const dropZone = document.getElementById('dropZone');
+
+        let currentImage = null;
+        let palette = [];
+
+        // --- Math & Color Engine ---
+
+        function rgbToLch(r, g, b) {
+            // Convert to 0-1 range
+            let r_s = r / 255, g_s = g / 255, b_s = b / 255;
+            // Gamma correction
+            r_s = r_s > 0.04045 ? Math.pow((r_s + 0.055) / 1.055, 2.4) : r_s / 12.92;
+            g_s = g_s > 0.04045 ? Math.pow((g_s + 0.055) / 1.055, 2.4) : g_s / 12.92;
+            b_s = b_s > 0.04045 ? Math.pow((b_s + 0.055) / 1.055, 2.4) : b_s / 12.92;
+
+            // RGB to XYZ (D65)
+            let x = (r_s * 0.4124 + g_s * 0.3576 + b_s * 0.1805) * 100;
+            let y = (r_s * 0.2126 + g_s * 0.7152 + b_s * 0.0722) * 100;
+            let z = (r_s * 0.0193 + g_s * 0.1192 + b_s * 0.9505) * 100;
+
+            // XYZ to Lab
+            x /= 95.047; y /= 100.00; z /= 108.883;
+            x = x > 0.008856 ? Math.pow(x, 1/3) : (7.787 * x) + (16/116);
+            y = y > 0.008856 ? Math.pow(y, 1/3) : (7.787 * y) + (16/116);
+            z = z > 0.008856 ? Math.pow(z, 1/3) : (7.787 * z) + (16/116);
+
+            const L = (116 * y) - 16;
+            const a = 500 * (x - y);
+            const b_lab = 200 * (y - z);
+
+            // Lab to LCH
+            const C = Math.sqrt(a * a + b_lab * b_lab);
+            let H = Math.atan2(b_lab, a) * (180 / Math.PI);
+            if (H < 0) H += 360;
+
+            return { l: Math.round(L), c: Math.round(C), h: Math.round(H) };
+        }
+
+        function getAccessibilityRating(r, g, b) {
+            const lch = rgbToLch(r, g, b);
+            
+            // Critical Check: White vs Yellow confusion
+            // White has high L but near 0 Chroma. Yellow has high L but high Chroma.
+            if (lch.l > 85) {
+                if (lch.c < 8) return { status: 'safe', title: 'Solid White', desc: 'Neutral brightness. High accessibility for most users.', color: 'green' };
+                if (lch.c > 15 && lch.h > 70 && lch.h < 100) return { status: 'safe', title: 'Vibrant Yellow', desc: 'High Chroma ensures visibility even for color-blind users.', color: 'green' };
+                return { status: 'warning', title: 'Tints / Off-white', desc: 'Risk of blending with background UI elements.', color: 'yellow' };
+            }
+
+            // Deuteranopia Zone (Red/Green/Brown)
+            if (lch.h > 10 && lch.h < 150 && lch.c > 10) {
+                return { status: 'danger', title: 'Confusion Zone', desc: 'Potential Red-Green overlap. Ensure icons or text provide secondary cues.', color: 'red' };
+            }
+
+            return { status: 'neutral', title: 'Standard Color', desc: 'Ensure text contrast ratio meets WCAG 2.1 (4.5:1).', color: 'blue' };
+        }
+
+        // --- Image Handling ---
+
+        function processImage(file) {
+            if (!file?.type.startsWith('image/')) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    currentImage = img;
+                    mainCanvas.width = img.width;
+                    mainCanvas.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+                    emptyState.classList.add('hidden');
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        uploadBtn.onclick = () => fileInput.click();
+        fileInput.onchange = (e) => processImage(e.target.files[0]);
+        
+        window.onpaste = (e) => {
+            const file = e.clipboardData.files[0];
+            if (file) processImage(file);
+        };
+
+        // --- Interaction ---
+
+        mainCanvas.onmousemove = (e) => {
+            if (!currentImage) return;
+            const rect = mainCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (mainCanvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (mainCanvas.height / rect.height);
+
+            const pixel = ctx.getImageData(x, y, 1, 1).data;
+            const [r, g, b] = pixel;
+            const hex = "#" + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase();
+            const lch = rgbToLch(r, g, b);
+            const rating = getAccessibilityRating(r, g, b);
+
+            // Update UI
+            document.getElementById('colorPreview').style.backgroundColor = hex;
+            document.getElementById('colorHex').innerText = hex;
+            document.getElementById('colorName').innerText = lch.l > 95 ? "Pure White" : (lch.l < 5 ? "Pure Black" : "Solid Color");
+            
+            document.getElementById('valL').innerText = lch.l;
+            document.getElementById('valC').innerText = lch.c;
+            document.getElementById('valH').innerText = lch.h;
+
+            // Update Badge
+            const badge = document.getElementById('safetyBadge');
+            const titleEl = document.getElementById('safetyTitle');
+            const descEl = document.getElementById('safetyDesc');
+            const iconEl = document.getElementById('safetyIcon');
+
+            titleEl.innerText = rating.title;
+            descEl.innerText = rating.desc;
+            
+            const colorMap = {
+                green: 'border-green-800 bg-green-900/10 text-green-400',
+                yellow: 'border-yellow-800 bg-yellow-900/10 text-yellow-400',
+                red: 'border-red-800 bg-red-900/10 text-red-400',
+                blue: 'border-blue-800 bg-blue-900/10 text-blue-400'
+            };
+            badge.className = `p-4 rounded-xl border flex gap-3 transition-all ${colorMap[rating.color] || 'border-neutral-800'}`;
+            iconEl.innerHTML = `<i data-lucide="${rating.status === 'safe' ? 'shield-check' : 'alert-circle'}" class="w-5 h-5"></i>`;
+            lucide.createIcons();
+
+            // Magnifier
+            magCanvas.style.display = 'block';
+            magCanvas.style.left = `${e.clientX - 80}px`;
+            magCanvas.style.top = `${e.clientY - 180}px`;
+            magCtx.imageSmoothingEnabled = false;
+            magCtx.clearRect(0, 0, 160, 160);
+            magCtx.drawImage(mainCanvas, x - 10, y - 10, 20, 20, 0, 0, 160, 160);
+        };
+
+        mainCanvas.onmouseleave = () => magCanvas.style.display = 'none';
+
+        mainCanvas.onclick = (e) => {
+            if (!currentImage) return;
+            const rect = mainCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (mainCanvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (mainCanvas.height / rect.height);
+            const pixel = ctx.getImageData(x, y, 1, 1).data;
+            const hex = "#" + [pixel[0], pixel[1], pixel[2]].map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase();
+
+            if (palette.length >= 5) palette.shift();
+            palette.push(hex);
+            updatePaletteUI();
+        };
+
+        function updatePaletteUI() {
+            const cells = document.querySelectorAll('#paletteGrid div');
+            cells.forEach((cell, i) => {
+                if (palette[i]) {
+                    cell.style.backgroundColor = palette[i];
+                    cell.style.borderStyle = 'solid';
+                    cell.title = palette[i];
+                }
+            });
+        }
+
+        // --- Filter Logic ---
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.onclick = () => {
+                document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active-mode'));
+                btn.classList.add('active-mode');
+                
+                const mode = btn.dataset.mode;
+                mainCanvas.className = "max-w-full max-h-full shadow-2xl transition-all duration-300";
+                if (mode !== 'normal') mainCanvas.classList.add(`filter-${mode}`);
+            };
+        });
+
+        // Export
+        document.getElementById('exportBtn').onclick = () => {
+            if (!palette.length) return alert("Save some colors first!");
+            const blob = new Blob([JSON.stringify({ palette }, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'vision-engine-palette.json';
+            a.click();
+        };
+    </script>
+</body>
+</html>
